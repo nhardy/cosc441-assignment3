@@ -1,33 +1,55 @@
 -module(a3).
--export([a3/2, worker/3]).
+-export([a3/2]).
 
+% a3 will sum all numbers 1 to N with work divided among
+% T threads and then compute the square root
 a3(N, T) ->
-    Pid = spawn(a3, worker, [self(), T, N]),
+    % A3 is a reference to the current process
+    A3 = self(),
 
-    receive {Pid, S} ->
-        math:sqrt(S)
-    end.
+    % For I in the range 1 to T, spawn a new process that
+    % will compute a Subtotal for a range we calculate
+    Pids = lists:map(fun (I) ->
+        Lower = N div T * (I - 1) + 1,
+        % If we're the final iteration, set Upper to N to
+        % cover cases where N is not evenly divisible by T
+        Upper = ternary(I == T, N, Lower + N div T - 1),
 
-% Worker will sumRange(L, U) and notify the Parent
-worker(P, L, U) ->
-    P ! {self(), sumRange(L, U)}.
+        % Spawn process to compute Subtotal and message
+        % this back to A3
+        spawn_link(fun () ->
+            A3 ! {self(), sumRange(Lower, Upper)}
+        end)
+    end, range(1, T)),
 
-% Parallel Map (pmap/2)
-% @see http://www.cs.otago.ac.nz/cosc441/2017-L10.pdf
-pmap(F, [X|Xs]) ->
-    S = self(),
-    P = spawn(fun () -> S ! {self(), F(X)} end),
-    Ys = pmap(F, Xs),
-    receive {P, Y} ->
-        [Y|Ys]
-    end;
-pmap(_, []) ->
-    [].
+    % Fold over each process id (Pid) and receive the
+    % Subtotal for each, accumulating the Total
+    Total = lists:foldl(fun (Pid, Acc) ->
+        receive {Pid, Subtotal} ->
+            Acc + Subtotal
+        end
+    end, 0, Pids),
 
-% Sum of all integers N, where L <= N <= U
-sumRange(L, L) ->
-    L;
-sumRange(L, U) ->
-    % Tail-call recursion allows the compiler
+    % Compute the square root of the Total
+    math:sqrt(Total).
+
+% Ternary expression shortcut
+ternary(true, IfTrueExpression, _) ->
+    IfTrueExpression;
+ternary(false, _, IfFalseExpression) ->
+    IfFalseExpression.
+
+% range(Lower, Upper) creates a list of integers
+% ranging from Lower to Upper inclusive
+range(N, N) ->
+    [N];
+range(Lower, Upper) ->
+    [Lower|range(Lower + 1, Upper)].
+
+% Sum of all integers from Lower to Upper
+sumRange(N, N) ->
+    N;
+sumRange(Lower, Upper) ->
+    % Tail-call recursion here allows the compiler
     % to optimise recursion as iteration
-    U + sumRange(L, U - 1).
+    Upper + sumRange(Lower, Upper - 1).
